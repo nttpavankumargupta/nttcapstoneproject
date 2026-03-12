@@ -57,6 +57,12 @@ def init_session_state():
     if 'resumes' not in st.session_state:
         st.session_state.resumes = []
 
+    #✅ NEW: persist answers + candidate selection across reruns
+    if "candidate_answers" not in st.session_state:
+        st.session_state.candidate_answers = {}
+    if "selected_candidate_id" not in st.session_state:
+        st.session_state.selected_candidate_id = ""
+
 @st.cache_resource
 def initialize_graph_builder():
     """Initialize the graph builder (cached)"""
@@ -258,6 +264,7 @@ def main():
         elif not st.session_state.resumes:
             st.error("❌ Please add at least one resume")
         elif st.session_state.graph_builder:
+            st.session_state.candidate_answers = {}   
             with st.spinner("🔄 Analyzing candidates... This may take a moment..."):
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -278,9 +285,11 @@ def main():
                     # Run analysis
                     result = st.session_state.graph_builder.run(
                         job_description,
-                        st.session_state.resumes
+                        st.session_state.resumes,
+                        target_resume_id=st.session_state.selected_candidate_id,
+                        candidate_answers={}
                     )
-                    
+
                     status_text.text("Step 4/4: Finalizing results...")
                     progress_bar.progress(100)
                     
@@ -325,35 +334,283 @@ def main():
             
             # Display other candidates
             if len(result.candidate_matches) > 1:
+                st.markdown("AGENT 1")
                 st.markdown("### 📋 All Candidates (Ranked)")
                 
                 for idx, match in enumerate(result.candidate_matches, 1):
+                    if result.best_candidate and match.resume_id == result.best_candidate.resume_id:
+                       continue
                     display_candidate_match(match, idx, is_best=False)
             
-            # Download results option
             st.markdown("---")
+            st.markdown("### 🤖 Agent 2 + 3 + 4: Interview, Evaluation & Learning Plan")
+
+            # Candidate picker (persist selection)
+            candidate_options = {m.resume_name: m.resume_id for m in result.candidate_matches}
+            default_id = result.best_candidate.resume_id if result.best_candidate else list(candidate_options.values())[0]
+
+            # pick default name based on stored ID
+            stored_id = st.session_state.selected_candidate_id or default_id
+            default_name = next((n for n, cid in candidate_options.items() if cid == stored_id), list(candidate_options.keys())[0])
+
+            selected_name = st.selectbox(
+                 "Select candidate:",
+                 list(candidate_options.keys()),
+                 index=list(candidate_options.keys()).index(default_name),
+                 key="candidate_selectbox"
+            )
+            selected_id = candidate_options[selected_name]
+            st.session_state.selected_candidate_id = selected_id
+
+          # If questions exist, show them; else show info
+            if getattr(result, "interview_questions", None) and len(result.interview_questions) > 0:
+               st.success(f"Interview questions ready: {len(result.interview_questions)}")
+            else:
+               st.info("No interview questions found yet. Click Analyze Candidates (Agent 2 runs automatically after ranking).")
+
+            # Answers (persist in session_state)
+            if getattr(result, "interview_questions", None) and len(result.interview_questions) > 0:
+                for q in result.interview_questions:
+                    st.markdown(f"**[{q.id}] ({q.category} | {q.skill_tag} | {q.difficulty})**")
+                    st.write(q.question)
+
+                    with st.expander("Expected Answers "):
+                        for r in q.rubric:
+                            st.markdown(f"- {r}")
+
+                    st.session_state.candidate_answers[q.id] = st.text_area(
+                       f"Answer for {q.id}",
+                       value=st.session_state.candidate_answers.get(q.id, ""),
+                       key=f"ans_{q.id}",
+                       height=120
+                    )
+                    st.markdown("---")
+
+                if st.button("✅ Evaluate Answers", key="eval_btn"):
+                    eval_state = st.session_state.graph_builder.run(
+                        job_description,
+                        st.session_state.resumes,
+                        target_resume_id=selected_id,
+                        candidate_answers=st.session_state.candidate_answers
+                    )
+                    st.session_state.analysis_result = eval_state
+                    st.rerun()
+
+           # Show evaluation (Agent 3)
+            if getattr(result, "interview_evaluation", None):
+                ev = result.interview_evaluation
+                st.markdown("---")
+                st.header("📌 Evaluation (Agent 3)")
+            
+                st.metric("Overall Score", f"{ev.overall_score:.1f}/100")
+                st.write(f"**Recommendation:** {ev.recommendation}")
+                st.write(ev.summary)
+            
+                st.subheader("Per-question breakdown")
+                for pq in ev.per_question:
+                    st.markdown(f"### {pq.question_id} — {pq.score}/5 ({pq.verdict})")
+                    st.write(pq.feedback)
+            
+            # Show learning plan (Agent 4) only if generated
+            plan = getattr(result, "learning_plan", None)
+            if plan:
+                st.markdown("---")
+                st.header("📚 Learning Plan (Agent 4 - Triggered due to incorrect answers)")
+                st.success(f"Estimated duration: {plan.overall_duration_weeks} weeks")
+                st.write(plan.summary)
+            
+                for mod in plan.modules:
+                    with st.expander(f"{mod.skill} — {mod.level_target} ({mod.duration_weeks} weeks @ {mod.weekly_hours} hrs/week)"):
+                        if mod.prerequisites:
+                            st.markdown("**Prerequisites**")
+                            for p in mod.prerequisites:
+                                st.markdown(f"- {p}")
+            
+                        st.markdown("**Learning steps**")
+                        for s in mod.learning_steps:
+                            st.markdown(f"- {s}")
+            
+                        if mod.resources:
+                            st.markdown("**Resources**")
+                            for r in mod.resources:
+                                st.markdown(f"- {r}")
+            
+                        if mod.practice_tasks:
+                            st.markdown("**Practice tasks**")
+                            for t in mod.practice_tasks:
+                                st.markdown(f"- {t}")
+            
+                        if mod.milestone:
+                            st.markdown(f"**Milestone:** {mod.milestone}")
+     
+     
             if st.button("📥 Download Results as Text"):
-                results_text = f"JOB MATCHING ANALYSIS RESULTS\n{'='*80}\n\n"
-                results_text += f"Job Title: {result.job_description.title if result.job_description else 'N/A'}\n"
-                results_text += f"Total Candidates Analyzed: {len(result.candidate_matches)}\n\n"
-                
+                jd_title = result.job_description.title if result.job_description else "N/A"
+            
+                results_text = []
+                results_text.append("JOB MATCHING ANALYSIS RESULTS")
+                results_text.append("=" * 90)
+                results_text.append(f"Job Title: {jd_title}")
+                results_text.append(f"Total Candidates Analyzed: {len(result.candidate_matches)}")
+                results_text.append("")
+            
+                # -------------------------
+                # AGENT 1: Ranking + Gaps
+                # -------------------------
+                results_text.append("AGENT 1: CANDIDATE RANKING + GAPS")
+                results_text.append("=" * 90)
+            
                 for idx, match in enumerate(result.candidate_matches, 1):
-                    results_text += f"\n{'='*80}\n"
-                    results_text += f"RANK #{idx}: {match.resume_name}\n"
-                    results_text += f"{'='*80}\n"
-                    results_text += f"Match Score: {match.match_score:.1f}/100\n\n"
-                    results_text += f"Matched Skills: {', '.join(match.matched_skills)}\n"
-                    results_text += f"Missing Skills: {', '.join(match.missing_skills)}\n"
-                    results_text += f"Strengths: {', '.join(match.strengths)}\n"
-                    results_text += f"Gaps: {', '.join(match.gaps)}\n"
-                    results_text += f"Summary: {match.summary}\n"
-                
+                    results_text.append("")
+                    results_text.append("-" * 90)
+                    results_text.append(f"RANK #{idx}: {match.resume_name} ({match.resume_id})")
+                    results_text.append(f"Match Score: {match.match_score:.1f}/100")
+                    results_text.append("-" * 90)
+                    results_text.append(f"Summary: {match.summary}")
+                    results_text.append(f"Matched Skills: {', '.join(match.matched_skills) if match.matched_skills else 'N/A'}")
+                    results_text.append(f"Missing Skills: {', '.join(match.missing_skills) if match.missing_skills else 'N/A'}")
+                    results_text.append(f"Strengths: {', '.join(match.strengths) if match.strengths else 'N/A'}")
+                    results_text.append(f"Gaps: {', '.join(match.gaps) if match.gaps else 'N/A'}")
+            
+                # -------------------------
+                # AGENT 2: Questions
+                # -------------------------
+                results_text.append("")
+                results_text.append("AGENT 2: INTERVIEW QUESTIONS")
+                results_text.append("=" * 90)
+            
+                if getattr(result, "interview_questions", None) and len(result.interview_questions) > 0:
+                    for q in result.interview_questions:
+                        results_text.append("")
+                        results_text.append(f"[{q.id}] Category: {q.category} | Skill: {q.skill_tag} | Difficulty: {q.difficulty}")
+                        results_text.append(f"Question: {q.question}")
+                        if q.rubric:
+                            results_text.append("Rubric:")
+                            for r in q.rubric:
+                                results_text.append(f"  - {r}")
+                else:
+                    results_text.append("No interview questions available.")
+            
+                # -------------------------
+                # AGENT 3: Answers + Evaluation
+                # -------------------------
+                results_text.append("")
+                results_text.append("AGENT 3: ANSWERS + EVALUATION")
+                results_text.append("=" * 90)
+            
+                # Candidate answers (from session_state if present; else from result if you stored them)
+                answers_dict = {}
+                if "candidate_answers" in st.session_state and st.session_state.candidate_answers:
+                    answers_dict = st.session_state.candidate_answers
+                elif getattr(result, "candidate_answers", None):
+                    answers_dict = result.candidate_answers
+            
+                if answers_dict:
+                    results_text.append("Candidate Answers:")
+                    for qid, ans in answers_dict.items():
+                        results_text.append(f"- {qid}: {ans}")
+                else:
+                    results_text.append("Candidate Answers: Not provided.")
+            
+                if getattr(result, "interview_evaluation", None):
+                    ev = result.interview_evaluation
+                    results_text.append("")
+                    results_text.append(f"Overall Score: {ev.overall_score:.1f}/100")
+                    results_text.append(f"Recommendation: {ev.recommendation}")
+                    results_text.append(f"Summary: {ev.summary}")
+            
+                    if ev.strengths:
+                        results_text.append("Strengths:")
+                        for s in ev.strengths:
+                            results_text.append(f"  - {s}")
+            
+                    if ev.concerns:
+                        results_text.append("Concerns:")
+                        for c in ev.concerns:
+                            results_text.append(f"  - {c}")
+            
+                    if ev.per_question:
+                        results_text.append("")
+                        results_text.append("Per-question Evaluation:")
+                        for pq in ev.per_question:
+                            results_text.append(f"  * {pq.question_id}: {pq.score}/5 ({pq.verdict})")
+                            results_text.append(f"    Feedback: {pq.feedback}")
+                            if pq.expected_points_hit:
+                                results_text.append("    Expected points hit:")
+                                for x in pq.expected_points_hit:
+                                    results_text.append(f"      - {x}")
+                            if pq.missing_points:
+                                results_text.append("    Missing points:")
+                                for x in pq.missing_points:
+                                    results_text.append(f"      - {x}")
+                else:
+                    results_text.append("Evaluation: Not available (answers not evaluated yet).")
+            
+                # -------------------------
+                # AGENT 4: Learning Plan
+                # -------------------------
+                results_text.append("")
+                results_text.append("AGENT 4: LEARNING PLAN (Triggered on weak answers)")
+                results_text.append("=" * 90)
+            
+                plan = getattr(result, "learning_plan", None)
+                if plan:
+                    results_text.append(f"Candidate: {plan.candidate_name} ({plan.candidate_id})")
+                    results_text.append(f"Role: {plan.role_title}")
+                    results_text.append(f"Estimated Duration: {plan.overall_duration_weeks} weeks")
+                    results_text.append(f"Summary: {plan.summary}")
+            
+                    if plan.modules:
+                        results_text.append("")
+                        results_text.append("Modules:")
+                        for i, mod in enumerate(plan.modules, 1):
+                            results_text.append("")
+                            results_text.append(f"{i}. Skill: {mod.skill}")
+                            results_text.append(f"   Level Target: {mod.level_target}")
+                            results_text.append(f"   Duration: {mod.duration_weeks} weeks @ {mod.weekly_hours} hrs/week")
+            
+                            if mod.prerequisites:
+                                results_text.append("   Prerequisites:")
+                                for p in mod.prerequisites:
+                                    results_text.append(f"     - {p}")
+            
+                            if mod.learning_steps:
+                                results_text.append("   Learning Steps:")
+                                for s in mod.learning_steps:
+                                    results_text.append(f"     - {s}")
+            
+                            if mod.resources:
+                                results_text.append("   Resources:")
+                                for r in mod.resources:
+                                    results_text.append(f"     - {r}")
+            
+                            if mod.practice_tasks:
+                                results_text.append("   Practice Tasks:")
+                                for t in mod.practice_tasks:
+                                    results_text.append(f"     - {t}")
+            
+                            if mod.milestone:
+                                results_text.append(f"   Milestone: {mod.milestone}")
+            
+                    if plan.notes:
+                        results_text.append("")
+                        results_text.append("Notes:")
+                        for n in plan.notes:
+                            results_text.append(f"  - {n}")
+                else:
+                    results_text.append("No learning plan generated (Agent 4 triggers only if evaluation is weak).")
+            
+                final_text = "\n".join(results_text)
+            
                 st.download_button(
-                    label="Download Results",
-                    data=results_text,
-                    file_name="job_matching_results.txt",
+                    label="Download Full Results (Agents 1-4)",
+                    data=final_text,
+                    file_name="job_matching_full_results_agents_1_to_4.txt",
                     mime="text/plain"
-                )
+                )# Download results option
+                        
+
+
 
 if __name__ == "__main__":
     main()
