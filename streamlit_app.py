@@ -12,7 +12,11 @@ sys.path.append(str(Path(__file__).parent))
 from src.config.config import Config
 from src.graph_builder.job_match_graph import JobMatchGraphBuilder
 from src.graph_builder.interview_prep_graph import InterviewPrepGraphBuilder
+from src.graph_builder.answer_eval_graph import AnswerEvalGraphBuilder
+from src.graph_builder.gap_analysis_graph import GapAnalysisGraphBuilder
 from src.utils.document_parser import extract_text_from_file
+from src.vectorstore.course_vectorstore import CourseVectorStore
+from src.state.answer_eval_state import QuestionAnswer
 
 # Page configuration
 st.set_page_config(
@@ -59,6 +63,20 @@ def init_session_state():
         st.session_state.interview_prep_graph_builder = None
     if 'interview_prep_result' not in st.session_state:
         st.session_state.interview_prep_result = None
+    if 'answer_eval_graph_builder' not in st.session_state:
+        st.session_state.answer_eval_graph_builder = None
+    if 'answer_eval_result' not in st.session_state:
+        st.session_state.answer_eval_result = None
+    if 'gap_analysis_graph_builder' not in st.session_state:
+        st.session_state.gap_analysis_graph_builder = None
+    if 'gap_analysis_result' not in st.session_state:
+        st.session_state.gap_analysis_result = None
+    if 'course_vectorstore' not in st.session_state:
+        st.session_state.course_vectorstore = None
+    if 'courses_loaded' not in st.session_state:
+        st.session_state.courses_loaded = False
+    if 'question_answers' not in st.session_state:
+        st.session_state.question_answers = []
 
 @st.cache_resource
 def initialize_job_match_builder():
@@ -85,6 +103,40 @@ def initialize_interview_prep_builder():
     except Exception as e:
         st.error(f"Failed to initialize: {str(e)}")
         return None
+
+@st.cache_resource
+def initialize_answer_eval_builder():
+    """Initialize the answer evaluation graph builder (cached)"""
+    try:
+        truststore.inject_into_ssl()
+        llm = Config.get_llm()
+        graph_builder = AnswerEvalGraphBuilder(llm)
+        graph_builder.build()
+        return graph_builder
+    except Exception as e:
+        st.error(f"Failed to initialize: {str(e)}")
+        return None
+
+@st.cache_resource
+def initialize_gap_analysis_builder():
+    """Initialize the gap analysis graph builder (cached)"""
+    try:
+        truststore.inject_into_ssl()
+        llm = Config.get_llm()
+        
+        # Initialize course vector store
+        course_store = CourseVectorStore()
+        course_path = Path("data/Course Master List.xlsx")
+        
+        if course_path.exists():
+            course_store.load_courses_from_excel(str(course_path))
+        
+        graph_builder = GapAnalysisGraphBuilder(llm, course_store)
+        graph_builder.build()
+        return graph_builder, course_store
+    except Exception as e:
+        st.error(f"Failed to initialize: {str(e)}")
+        return None, None
 
 def display_candidate_match(match, rank, is_best=False):
     """Display a candidate match card"""
@@ -636,13 +688,519 @@ def home_page():
     
     st.info("💡 Click on any tab above to explore the available AI agents")
 
+def answer_evaluation_agent():
+    """Answer Evaluation Agent Interface - Agent 3"""
+    st.title("✅ Answer Evaluation Agent")
+    st.markdown("**Evaluate candidate answers with practical-focused scoring**")
+    
+    # Initialize system
+    if st.session_state.answer_eval_graph_builder is None:
+        with st.spinner("Initializing Answer Evaluation AI system..."):
+            graph_builder = initialize_answer_eval_builder()
+            if graph_builder:
+                st.session_state.answer_eval_graph_builder = graph_builder
+                st.success("✅ System ready!")
+    
+    st.markdown("---")
+    
+    # Job Description Input
+    st.subheader("📋 Job Description")
+    job_description = st.text_area(
+        "Paste the job description:",
+        height=200,
+        placeholder="Enter the job description that was used for interview questions..."
+    )
+    
+    st.markdown("---")
+    
+    # Question and Answer Input
+    st.subheader("❓ Questions and Answers")
+    st.markdown("Add interview questions and candidate's answers for evaluation")
+    
+    # Display existing Q&A
+    if st.session_state.question_answers:
+        st.success(f"**{len(st.session_state.question_answers)} question(s) added**")
+        
+        with st.expander("View Questions & Answers"):
+            for idx, qa in enumerate(st.session_state.question_answers, 1):
+                st.markdown(f"**Q{idx}:** {qa['question']}")
+                st.markdown(f"**A{idx}:** {qa['answer'][:100]}...")
+                st.markdown("---")
+        
+        if st.button("🗑️ Clear All Q&A"):
+            st.session_state.question_answers = []
+            st.rerun()
+    
+    # Add new Q&A
+    with st.form("add_qa_form"):
+        question = st.text_area("Question:", height=100, placeholder="Enter the interview question...")
+        answer = st.text_area("Candidate's Answer:", height=150, placeholder="Enter the candidate's answer...")
+        add_qa_button = st.form_submit_button("➕ Add Question & Answer")
+        
+        if add_qa_button and question and answer:
+            st.session_state.question_answers.append({
+                "question": question,
+                "answer": answer
+            })
+            st.success("Q&A added successfully!")
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Evaluate button
+    col_center1, col_center2, col_center3 = st.columns([1, 2, 1])
+    with col_center2:
+        evaluate_button = st.button("🚀 Evaluate Answers", type="primary", use_container_width=True)
+    
+    # Run evaluation
+    if evaluate_button:
+        if not job_description:
+            st.error("❌ Please provide a job description")
+        elif not st.session_state.question_answers:
+            st.error("❌ Please add at least one question and answer")
+        elif st.session_state.answer_eval_graph_builder:
+            with st.spinner("🔄 Evaluating answers..."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    status_text.text("Step 1/3: Analyzing answers...")
+                    progress_bar.progress(33)
+                    
+                    # Convert to QuestionAnswer objects
+                    qa_objects = [
+                        QuestionAnswer(
+                            question=qa["question"],
+                            question_topic="General",  # Default topic
+                            question_difficulty="Medium",  # Default difficulty
+                            candidate_answer=qa["answer"],
+                            expected_answer_points=[]  # No expected points for manual entry
+                        )
+                        for qa in st.session_state.question_answers
+                    ]
+                    
+                    status_text.text("Step 2/3: Scoring practical skills...")
+                    progress_bar.progress(66)
+                    
+                    result = st.session_state.answer_eval_graph_builder.run(
+                        job_description,
+                        qa_objects
+                    )
+                    
+                    status_text.text("Step 3/3: Generating summary...")
+                    progress_bar.progress(100)
+                    
+                    st.session_state.answer_eval_result = result
+                    
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    st.success("✅ Evaluation complete!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error during evaluation: {str(e)}")
+                    st.exception(e)
+    
+    # Display results
+    if st.session_state.answer_eval_result:
+        result = st.session_state.answer_eval_result
+        
+        # Debug logging
+        st.write("**[DEBUG] Result keys:**", list(result.keys()) if isinstance(result, dict) else "Not a dict")
+        
+        st.markdown("---")
+        st.header("📊 Evaluation Results")
+        
+        # Check for error first
+        if result.get('error'):
+            st.error(f"❌ Error: {result.get('error')}")
+            return
+        
+        # Overall metrics
+        evaluations = result.get('evaluations', [])
+        st.write(f"**[DEBUG] Number of evaluations:** {len(evaluations)}")
+        
+        if evaluations:
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                total_score = sum(e.score for e in evaluations)
+                max_score = len(evaluations) * 100
+                overall_pct = (total_score / max_score * 100) if max_score > 0 else 0
+                st.metric("Overall Score", f"{overall_pct:.1f}%")
+            
+            with col2:
+                avg_score = total_score / len(evaluations) if evaluations else 0
+                st.metric("Average Score", f"{avg_score:.1f}/100")
+            
+            with col3:
+                st.metric("Questions Evaluated", len(evaluations))
+            
+            st.markdown("---")
+            
+            # Display evaluation summary
+            summary = result.get('summary', '')
+            if summary:
+                st.subheader("📝 Overall Summary")
+                st.write(summary)
+                st.markdown("---")
+            
+            # Individual answer evaluations
+            st.subheader("📋 Individual Answer Evaluations")
+            
+            for idx, evaluation in enumerate(evaluations, 1):
+                with st.expander(f"Question {idx} - Score: {evaluation.score:.1f}/100", expanded=(idx == 1)):
+                    st.markdown("#### Question")
+                    st.write(evaluation.question)
+                    
+                    st.markdown("#### Candidate's Answer")
+                    st.write(evaluation.candidate_answer)
+                    
+                    st.markdown("---")
+                    
+                    # Scores
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.metric("Overall Score", f"{evaluation.score:.1f}/100")
+                    with col_b:
+                        st.metric("Practicality", f"{evaluation.practicality_score:.1f}/100")
+                    
+                    # Strengths
+                    if evaluation.strengths:
+                        st.markdown("#### 💪 Strengths")
+                        for strength in evaluation.strengths:
+                            st.markdown(f"• {strength}")
+                    
+                    # Weaknesses
+                    if evaluation.weaknesses:
+                        st.markdown("#### ⚠️ Weaknesses")
+                        for weakness in evaluation.weaknesses:
+                            st.markdown(f"• {weakness}")
+                    
+                    # Missing practical aspects
+                    if evaluation.missing_practical_aspects:
+                        st.markdown("#### 🎯 Missing Practical Aspects")
+                        for aspect in evaluation.missing_practical_aspects:
+                            st.markdown(f"• {aspect}")
+                    
+                    # Feedback
+                    if evaluation.feedback:
+                        st.markdown("#### 💬 Feedback")
+                        st.write(evaluation.feedback)
+            
+            # Missing skills
+            missing_skills = result.get('missing_practical_skills', [])
+            if missing_skills:
+                st.markdown("---")
+                st.subheader("🎯 Missing Practical Skills (Overall)")
+                for skill in missing_skills:
+                    st.markdown(f"• {skill}")
+            
+            # Download results
+            st.markdown("---")
+            if st.button("📥 Download Evaluation Report"):
+                report_text = "ANSWER EVALUATION REPORT\n"
+                report_text += "="*80 + "\n\n"
+                report_text += f"Total Questions: {len(evaluations)}\n"
+                report_text += f"Overall Score: {overall_pct:.1f}%\n\n"
+                
+                if summary:
+                    report_text += f"Summary:\n{summary}\n\n"
+                
+                for idx, evaluation in enumerate(evaluations, 1):
+                    report_text += f"\n{'='*80}\n"
+                    report_text += f"QUESTION {idx}\n"
+                    report_text += f"{'='*80}\n"
+                    report_text += f"Q: {evaluation.question}\n\n"
+                    report_text += f"A: {evaluation.candidate_answer}\n\n"
+                    report_text += f"Score: {evaluation.score:.1f}/100\n"
+                    report_text += f"Practicality Score: {evaluation.practicality_score:.1f}/100\n\n"
+                    if evaluation.strengths:
+                        report_text += f"Strengths: {', '.join(evaluation.strengths)}\n"
+                    if evaluation.weaknesses:
+                        report_text += f"Weaknesses: {', '.join(evaluation.weaknesses)}\n"
+                    report_text += f"\nFeedback: {evaluation.feedback}\n"
+                
+                if missing_skills:
+                    report_text += f"\n{'='*80}\n"
+                    report_text += "MISSING PRACTICAL SKILLS:\n"
+                    for skill in missing_skills:
+                        report_text += f"• {skill}\n"
+                
+                st.download_button(
+                    label="Download Report",
+                    data=report_text,
+                    file_name="answer_evaluation_report.txt",
+                    mime="text/plain"
+                )
+        else:
+            st.info("No evaluations available. Please check the debug information above.")
+
+def gap_analysis_agent():
+    """Gap Analysis and Course Recommendation Agent - Agent 4"""
+    st.title("🎓 Gap Analysis & Course Recommendation")
+    st.markdown("**Identify skill gaps and get personalized course recommendations**")
+    
+    # Initialize system
+    if st.session_state.gap_analysis_graph_builder is None or st.session_state.course_vectorstore is None:
+        with st.spinner("Initializing Gap Analysis AI system and loading courses..."):
+            builder, course_store = initialize_gap_analysis_builder()
+            if builder and course_store:
+                st.session_state.gap_analysis_graph_builder = builder
+                st.session_state.course_vectorstore = course_store
+                st.session_state.courses_loaded = True
+                st.success("✅ System ready! Courses loaded successfully.")
+            else:
+                st.error("❌ Failed to initialize system. Please check if Course Master List.xlsx exists in data folder.")
+    
+    st.markdown("---")
+    
+    # Check if we have evaluation results to use
+    has_eval_results = st.session_state.answer_eval_result is not None
+    
+    if has_eval_results:
+        st.success("✅ Answer evaluation results detected! You can use them directly.")
+        use_existing = st.radio(
+            "Data source:",
+            ["Use existing evaluation results", "Enter manually"],
+            horizontal=True
+        )
+    else:
+        st.info("💡 Run Answer Evaluation first, or enter data manually")
+        use_existing = "Enter manually"
+    
+    job_description = ""
+    missing_skills = []
+    
+    if use_existing == "Use existing evaluation results" and has_eval_results:
+        result = st.session_state.answer_eval_result
+        job_description = result.get('job_description_text', '')
+        missing_skills = result.get('missing_practical_skills', [])
+        
+        st.subheader("📋 Detected Job Description")
+        st.text_area("Job Description (from evaluation):", job_description[:300] + "...", height=100, disabled=True)
+        
+        st.subheader("🎯 Detected Missing Skills")
+        if missing_skills:
+            for skill in missing_skills:
+                st.markdown(f"• {skill}")
+        else:
+            st.info("No missing skills detected")
+    
+    else:
+        st.subheader("📋 Job Description")
+        job_description = st.text_area(
+            "Paste the job description:",
+            height=200,
+            placeholder="Enter the job description..."
+        )
+        
+        st.subheader("🎯 Missing Skills")
+        st.markdown("Enter the skills that need improvement (one per line)")
+        
+        skills_input = st.text_area(
+            "Missing Skills:",
+            height=150,
+            placeholder="Python\nMachine Learning\nDocker\n..."
+        )
+        
+        if skills_input:
+            missing_skills = [skill.strip() for skill in skills_input.split('\n') if skill.strip()]
+    
+    st.markdown("---")
+    
+    # Analyze button
+    col_center1, col_center2, col_center3 = st.columns([1, 2, 1])
+    with col_center2:
+        analyze_button = st.button("🚀 Analyze Gaps & Recommend Courses", type="primary", use_container_width=True)
+    
+    # Run analysis
+    if analyze_button:
+        if not job_description:
+            st.error("❌ Please provide a job description")
+        elif not missing_skills:
+            st.error("❌ Please provide at least one missing skill")
+        elif st.session_state.gap_analysis_graph_builder:
+            with st.spinner("🔄 Analyzing skill gaps and finding courses..."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    status_text.text("Step 1/4: Identifying skill gaps...")
+                    progress_bar.progress(25)
+                    
+                    # Prepare answer evaluations if available
+                    answer_evals = []
+                    if use_existing == "Use existing evaluation results" and st.session_state.answer_eval_result:
+                        answer_evals = st.session_state.answer_eval_result.get('evaluations', [])
+                    
+                    status_text.text("Step 2/4: Searching relevant courses...")
+                    progress_bar.progress(50)
+                    
+                    result = st.session_state.gap_analysis_graph_builder.run(
+                        job_description,
+                        answer_evals,
+                        missing_skills
+                    )
+                    
+                    status_text.text("Step 3/4: Ranking recommendations...")
+                    progress_bar.progress(75)
+                    
+                    status_text.text("Step 4/4: Creating learning path...")
+                    progress_bar.progress(100)
+                    
+                    st.session_state.gap_analysis_result = result
+                    
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    st.success("✅ Analysis complete!")
+                    
+                except Exception as e:
+                    st.error(f"❌ Error during analysis: {str(e)}")
+                    st.exception(e)
+    
+    # Display results
+    if st.session_state.gap_analysis_result:
+        result = st.session_state.gap_analysis_result
+        
+        st.markdown("---")
+        st.header("📊 Gap Analysis Results")
+        
+        # Display course recommendations
+        if result.get('course_recommendations'):
+            st.subheader("📚 Recommended Courses")
+            
+            # Create DataFrame for tabular display
+            import pandas as pd
+            
+            course_data = []
+            priority_map = {
+                5: "⭐⭐⭐⭐⭐ Must Do",
+                4: "⭐⭐⭐⭐ Highly Recommended",
+                3: "⭐⭐⭐ Recommended",
+                2: "⭐⭐ Optional",
+                1: "⭐ Nice to Have"
+            }
+            
+            for course in result['course_recommendations']:
+                course_data.append({
+                    'Course ID': course.course_id,
+                    'Course Name': course.course_name,
+                    'Priority': priority_map.get(course.priority, "⭐⭐⭐ Recommended"),
+                    'Rating': f"{course.priority}/5",
+                    'Target Time': course.target_time,
+                    'Relevance': f"{course.relevance_score:.0f}%",
+                    'Skills Covered': ', '.join(course.addresses_gaps)
+                })
+            
+            df = pd.DataFrame(course_data)
+            
+            # Display table with custom styling
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Course ID": st.column_config.TextColumn("Course ID", width="small"),
+                    "Course Name": st.column_config.TextColumn("Course Name", width="large"),
+                    "Priority": st.column_config.TextColumn("Priority", width="medium"),
+                    "Rating": st.column_config.TextColumn("Value", width="small"),
+                    "Target Time": st.column_config.TextColumn("Target Time", width="small"),
+                    "Relevance": st.column_config.TextColumn("Match", width="small"),
+                    "Skills Covered": st.column_config.TextColumn("Skills to Cover", width="large")
+                }
+            )
+            
+            st.markdown("---")
+            
+            # Show detailed view as expandable sections
+            st.subheader("📖 Course Details")
+            for idx, course in enumerate(result['course_recommendations'], 1):
+                priority_text = priority_map.get(course.priority, "Recommended")
+                with st.expander(f"{idx}. {course.course_name} - {priority_text}", expanded=False):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Priority Rating", f"{course.priority}/5")
+                    with col2:
+                        st.metric("Relevance Score", f"{course.relevance_score:.0f}%")
+                    with col3:
+                        st.metric("Estimated Time", course.target_time)
+                    
+                    st.markdown("**Course ID:**")
+                    st.code(course.course_id)
+                    
+                    st.markdown("**Addresses Skills:**")
+                    for skill in course.addresses_gaps:
+                        st.markdown(f"• {skill}")
+                    
+                    st.markdown("**Why Recommended:**")
+                    st.info(course.reason)
+                    
+                    st.markdown("**Course Summary:**")
+                    st.write(course.summary)
+
+            st.markdown("---")
+        
+        # Display learning path
+        if result.get('learning_path'):
+            st.subheader("🗺️ Suggested Learning Path")
+            st.write(result['learning_path'])
+            st.markdown("---")
+        
+        # Download results
+        if st.button("📥 Download Learning Plan"):
+            plan_text = "SKILL GAP ANALYSIS & LEARNING PLAN\n"
+            plan_text += "="*80 + "\n\n"
+            
+            if result.get('identified_gaps'):
+                plan_text += "SKILL GAPS:\n"
+                plan_text += "-"*80 + "\n"
+                for gap in result['identified_gaps']:
+                    plan_text += f"\n{gap.skill_name} (Importance: {gap.importance})\n"
+                    plan_text += f"Description: {gap.gap_description}\n"
+                    plan_text += f"Current Level: {gap.current_level}\n"
+                    plan_text += f"Required Level: {gap.required_level}\n"
+                plan_text += "\n"
+            
+            if result.get('course_recommendations'):
+                plan_text += "RECOMMENDED COURSES:\n"
+                plan_text += "-"*80 + "\n"
+                for idx, course in enumerate(result['course_recommendations'], 1):
+                    plan_text += f"\n{idx}. {course.course_name} (ID: {course.course_id})\n"
+                    plan_text += f"Relevance: {course.relevance_score:.1f}%\n"
+                    if course.addresses_gaps:
+                        plan_text += f"Addresses: {', '.join(course.addresses_gaps)}\n"
+                    if course.summary:
+                        plan_text += f"Summary: {course.summary}\n"
+                    plan_text += "\n"
+            
+            if result.get('learning_path'):
+                plan_text += "LEARNING PATH:\n"
+                plan_text += "-"*80 + "\n"
+                plan_text += result['learning_path'] + "\n"
+            
+            st.download_button(
+                label="Download Learning Plan",
+                data=plan_text,
+                file_name="learning_plan.txt",
+                mime="text/plain"
+            )
+
 def main():
     """Main application function"""
     # Initialize session state
     init_session_state()
     
     # Create tabs for different agents
-    tab1, tab2, tab3, tab4 = st.tabs(["🏠 Home", "🎯 Job Matching", "📝 Interview Prep", "📚 RAG Agent"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🏠 Home", 
+        "🎯 Job Matching", 
+        "📝 Interview Prep", 
+        "✅ Answer Evaluation",
+        "🎓 Gap Analysis",
+        "📚 RAG Agent"
+    ])
     
     with tab1:
         home_page()
@@ -654,6 +1212,12 @@ def main():
         interview_prep_agent()
     
     with tab4:
+        answer_evaluation_agent()
+    
+    with tab5:
+        gap_analysis_agent()
+    
+    with tab6:
         rag_agent()
 
 if __name__ == "__main__":
