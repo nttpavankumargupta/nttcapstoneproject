@@ -14,3 +14,5 @@ wikipedia
 truststore
 pypdf
 python-docx
+chromadb
+openpyxl
