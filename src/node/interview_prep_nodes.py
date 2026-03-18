@@ -64,7 +64,7 @@ class InterviewPrepNodes:
     
     def generate_questions(self, state: InterviewPrepState) -> InterviewPrepState:
         """
-        Generate interview questions based on requirements
+        Generate more practicle interview questions based on requirements
         
         Args:
             state: Current workflow state

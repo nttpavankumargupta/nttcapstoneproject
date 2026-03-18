@@ -1,7 +1,12 @@
 """Job Matching Agent using LangGraph"""
 
+import logging
 from src.config.config import Config
 from src.graph_builder.job_match_graph import JobMatchGraphBuilder
+from src.utils.logger import get_logger, log_shutdown_info
+
+# Initialize logger for this module
+logger = get_logger(__name__)
 
 
 def print_separator():
@@ -28,18 +33,31 @@ def print_candidate_analysis(match):
 def main():
     """Main function to demonstrate job matching agent"""
     
+    logger.info("Starting Job Matching Agent application")
     print("🤖 Job Matching Agent with LangGraph")
     print_separator()
     
     # Initialize LLM
+    logger.info("Initializing language model")
     print("Initializing language model...")
-    llm = Config.get_llm()
+    try:
+        llm = Config.get_llm()
+        logger.info("Language model initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize language model: {str(e)}", exc_info=True)
+        raise
     
     # Create job matching graph
+    logger.info("Building job matching workflow graph")
     print("Building job matching workflow graph...")
-    graph_builder = JobMatchGraphBuilder(llm)
-    graph_builder.build()
-    print("✅ Graph built successfully!")
+    try:
+        graph_builder = JobMatchGraphBuilder(llm)
+        graph_builder.build()
+        logger.info("Job matching graph built successfully")
+        print("✅ Graph built successfully!")
+    except Exception as e:
+        logger.error(f"Failed to build job matching graph: {str(e)}", exc_info=True)
+        raise
     print_separator()
     
     # Sample job description
@@ -139,12 +157,15 @@ def main():
     print(job_description[:200] + "...")
     print_separator()
     
+    logger.info(f"Preparing to analyze {len(resumes)} resumes")
     print(f"📚 Number of Resumes to Analyze: {len(resumes)}")
     for resume in resumes:
         print(f"   • {resume['name']}")
+        logger.debug(f"Resume loaded: {resume['name']}")
     print_separator()
     
     # Run the job matching workflow
+    logger.info("Starting job matching analysis workflow")
     print("🔄 Running job matching analysis...")
     print("   Step 1: Parsing job description...")
     print("   Step 2: Parsing resumes...")
@@ -152,13 +173,21 @@ def main():
     print("   Step 4: Finalizing results...")
     print_separator()
     
-    result = graph_builder.run(job_description, resumes)
+    try:
+        result = graph_builder.run(job_description, resumes)
+        logger.info("Job matching analysis completed successfully")
+    except Exception as e:
+        logger.error(f"Error during job matching analysis: {str(e)}", exc_info=True)
+        print(f"❌ Error: {str(e)}")
+        return
     
     # Display results
     if result.error:
+        logger.error(f"Job matching returned error: {result.error}")
         print(f"❌ Error: {result.error}")
         return
     
+    logger.info("Displaying analysis results")
     print("✅ Analysis Complete!")
     print_separator()
     
@@ -166,17 +195,29 @@ def main():
     print_separator()
     
     for idx, match in enumerate(result.candidate_matches, 1):
+        logger.info(f"Candidate #{idx}: {match.resume_name} - Score: {match.match_score:.1f}")
         print(f"#{idx} Rank")
         print_candidate_analysis(match)
     
     # Highlight best candidate
     if result.best_candidate:
+        logger.info(f"Best candidate identified: {result.best_candidate.resume_name} with score {result.best_candidate.match_score:.1f}")
         print("🏆 BEST FIT CANDIDATE")
         print_separator()
         print_candidate_analysis(result.best_candidate)
         
     print("✅ Job matching analysis completed successfully!")
+    logger.info("Job matching agent execution completed successfully")
+    log_shutdown_info()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.warning("Application interrupted by user")
+        log_shutdown_info()
+    except Exception as e:
+        logger.critical(f"Application failed with unexpected error: {str(e)}", exc_info=True)
+        log_shutdown_info()
+        raise

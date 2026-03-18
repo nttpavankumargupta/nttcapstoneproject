@@ -14,17 +14,12 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     
     # Model Configuration
+    # LLM_MODEL = "openai:gpt-4o"
     LLM_MODEL = "openai:gpt-4o"
     
     # Document Processing
     CHUNK_SIZE = 500
     CHUNK_OVERLAP = 50
-    
-    # Default URLs
-    DEFAULT_URLS = [
-        "https://lilianweng.github.io/posts/2023-06-23-agent/",
-        "https://lilianweng.github.io/posts/2024-04-12-diffusion-video/"
-    ]
     
     @classmethod
     def get_llm(cls):

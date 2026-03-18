@@ -2,6 +2,10 @@
 
 from typing import List
 from src.state.answer_eval_state import AnswerEvalState, AnswerEvaluation
+from src.utils.logger import get_logger
+
+# Initialize logger
+logger = get_logger(__name__)
 
 
 class AnswerEvalNodes:
@@ -15,6 +19,7 @@ class AnswerEvalNodes:
             llm: Language model instance
         """
         self.llm = llm
+        logger.info("AnswerEvalNodes initialized")
     
     def evaluate_individual_answers(self, state: AnswerEvalState) -> AnswerEvalState:
         """
@@ -26,11 +31,14 @@ class AnswerEvalNodes:
         Returns:
             Updated state with individual evaluations
         """
+        logger.info("Starting individual answer evaluation")
         try:
             questions_and_answers = state['questions_and_answers']
+            logger.debug(f"Evaluating {len(questions_and_answers)} answers")
             evaluations = []
             
-            for qa in questions_and_answers:
+            for idx, qa in enumerate(questions_and_answers, 1):
+                logger.debug(f"Evaluating answer {idx}/{len(questions_and_answers)}: {qa.question[:50]}...")
                 prompt = f"""
                 You are an expert interviewer evaluating a candidate's answer with a focus on PRACTICAL understanding, not theoretical knowledge.
                 
@@ -71,17 +79,21 @@ class AnswerEvalNodes:
                 
                 response = self.llm.invoke(prompt)
                 content = response.content if hasattr(response, 'content') else str(response)
+                logger.debug(f"LLM response received for answer {idx}")
                 
                 # Parse the evaluation
                 evaluation = self._parse_evaluation(qa.question, qa.candidate_answer, content)
+                logger.debug(f"Answer {idx} evaluation score: {evaluation.score:.1f}/100 (Practical: {evaluation.practicality_score:.1f})")
                 evaluations.append(evaluation)
             
+            logger.info(f"Successfully evaluated {len(evaluations)} answers")
             return {
                 **state,
                 "evaluations": evaluations
             }
             
         except Exception as e:
+            logger.error(f"Failed to evaluate answers: {str(e)}", exc_info=True)
             return {
                 **state,
                 "error": f"Failed to evaluate answers: {str(e)}"
@@ -166,13 +178,16 @@ class AnswerEvalNodes:
         Returns:
             Updated state with aggregated results
         """
+        logger.info("Starting results aggregation")
         try:
             if state.get('error'):
+                logger.warning(f"Skipping aggregation due to previous error: {state.get('error')}")
                 return state
             
             evaluations = state.get('evaluations', [])
             
             if not evaluations:
+                logger.error("No evaluations found to aggregate")
                 return {
                     **state,
                     "error": "No evaluations to aggregate"
@@ -185,6 +200,9 @@ class AnswerEvalNodes:
             
             overall_practical_score = total_practical / count
             overall_theoretical_score = total_theoretical / count
+            
+            logger.debug(f"Overall practical score: {overall_practical_score:.1f}/100")
+            logger.debug(f"Overall theoretical score: {overall_theoretical_score:.1f}/100")
             
             # Collect all practical skills and gaps
             all_strengths = []
@@ -232,9 +250,13 @@ class AnswerEvalNodes:
             
             response = self.llm.invoke(prompt)
             content = response.content if hasattr(response, 'content') else str(response)
+            logger.debug("LLM aggregation response received")
             
             # Parse aggregated results
             strong_areas, weak_areas, practical_skills, missing_skills = self._parse_aggregation(content)
+            
+            logger.info(f"Aggregation complete: {len(strong_areas)} strengths, {len(weak_areas)} weaknesses")
+            logger.debug(f"Missing skills identified: {len(missing_skills)}")
             
             return {
                 **state,
@@ -247,6 +269,7 @@ class AnswerEvalNodes:
             }
             
         except Exception as e:
+            logger.error(f"Failed to aggregate results: {str(e)}", exc_info=True)
             return {
                 **state,
                 "error": f"Failed to aggregate results: {str(e)}"
@@ -304,8 +327,10 @@ class AnswerEvalNodes:
         Returns:
             Final state with summary
         """
+        logger.info("Generating evaluation summary")
         try:
             if state.get('error'):
+                logger.warning(f"Skipping summary generation due to previous error: {state.get('error')}")
                 return state
             
             prompt = f"""
@@ -336,12 +361,16 @@ class AnswerEvalNodes:
             response = self.llm.invoke(prompt)
             summary = response.content if hasattr(response, 'content') else str(response)
             
+            logger.info("Summary generated successfully")
+            logger.debug(f"Summary length: {len(summary)} characters")
+            
             return {
                 **state,
                 "summary": summary
             }
             
         except Exception as e:
+            logger.error(f"Failed to generate summary: {str(e)}", exc_info=True)
             return {
                 **state,
                 "error": f"Failed to generate summary: {str(e)}"

@@ -1,45 +1,107 @@
-# Job Matching Agent with LangGraph
+# Multi-Agent AI System
 
-An intelligent job matching agent built with LangGraph that analyzes resumes against job descriptions, identifies the best candidates, and highlights gaps between candidate qualifications and job requirements.
+A comprehensive Multi-Agent AI System built with LangGraph that streamlines recruitment and learning processes. The system includes four specialized agents for job matching, interview preparation, answer evaluation, and gap analysis with personalized course recommendations.
 
-## Features
+## 🌟 Features
 
-- 🔍 **Intelligent Resume Analysis**: Uses LLM to extract skills, experience, and education from resumes
-- 📋 **Job Description Parsing**: Automatically identifies required skills, preferred skills, and requirements
-- 🎯 **Smart Matching**: Calculates match scores and ranks candidates
-- ⚠️ **Gap Analysis**: Identifies missing skills and experience gaps
-- 💪 **Strength Identification**: Highlights candidate strengths relevant to the position
-- 📊 **Comprehensive Reports**: Provides detailed analysis for each candidate
+### Agent 1: Job Matching
+- 🔍 **Intelligent Resume Analysis**: Uses Azure OpenAI GPT-4o to extract skills, experience, and education
+- 📋 **Job Description Parsing**: Automatically identifies PRIMARY (required) and SECONDARY (preferred) skills
+- 🎯 **Weighted Scoring**: Prioritizes must-have skills (70%) over nice-to-have skills (30%)
+- 📊 **Comprehensive Reports**: Detailed match analysis with strengths, gaps, and recommendations
 
-## Architecture
+### Agent 2: Interview Preparation
+- 📝 **Dynamic Question Generation**: Creates tailored interview questions based on job requirements
+- 🎚️ **Difficulty Levels**: Generates questions at Easy, Medium, and Hard levels
+- 💡 **Expected Answers**: Provides key points interviewers should look for
+- 🔄 **Follow-up Questions**: Includes probing questions for deeper assessment
 
-The agent uses a LangGraph workflow with the following nodes:
+### Agent 3: Answer Evaluation
+- ✅ **Practical-Focused Scoring**: Emphasizes real-world understanding (70%) over theory (30%)
+- 📊 **Detailed Feedback**: Identifies strengths, weaknesses, and missing practical aspects
+- 🎯 **Skills Assessment**: Pinpoints demonstrated and missing practical skills
+- 📈 **Overall Evaluation**: Aggregated scores with comprehensive summary
 
-1. **Parse Job Description**: Extracts structured information from job posting
-2. **Parse Resumes**: Analyzes each resume to extract skills, experience, and education
-3. **Analyze Matches**: Compares candidates against requirements and calculates fit
-4. **Finalize Results**: Ranks candidates and identifies best fit
+### Agent 4: Gap Analysis & Learning Recommendations
+- 🎓 **Course Recommendations**: AI-powered suggestions from course catalog (2000+ courses)
+- 🔍 **Vector Search**: ChromaDB-powered semantic course matching
+- 📚 **Learning Paths**: Structured sequence of courses to fill skill gaps
+- ⏱️ **Time Estimates**: Projected learning duration for each course
 
+## 🏗️ Architecture
+
+This is a sophisticated **Multi-Agent System** where each agent operates independently while sharing data through a common state management system. For comprehensive architecture details, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+### High-Level System Design
+
+```mermaid
+graph TD
+    UI[Streamlit Web Interface]
+    
+    UI --> A1[Agent 1<br/>Job Matching]
+    UI --> A2[Agent 2<br/>Interview Preparation]
+    UI --> A3[Agent 3<br/>Answer Evaluation]
+    
+    A1 --> A4[Agent 4<br/>Gap Analysis & Courses]
+    A2 --> A4
+    A3 --> A4
+    
+    A4 --> DB[(ChromaDB<br/>Vector Store)]
+    
+    style UI fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#fff
+    style A1 fill:#7ED321,stroke:#5FA319,stroke-width:2px,color:#000
+    style A2 fill:#7ED321,stroke:#5FA319,stroke-width:2px,color:#000
+    style A3 fill:#7ED321,stroke:#5FA319,stroke-width:2px,color:#000
+    style A4 fill:#F5A623,stroke:#D68910,stroke-width:2px,color:#000
+    style DB fill:#BD10E0,stroke:#9012B4,stroke-width:2px,color:#fff
 ```
-┌─────────────────────────┐
-│  Parse Job Description  │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│    Parse Resumes        │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│   Analyze Matches       │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│   Finalize Results      │
-└─────────────────────────┘
+
+### 🔗 Documentation
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete system architecture with:
+  - Detailed agent pipeline diagrams
+  - Data flow visualization
+  - Weighted scoring formulas (Job Matching & Answer Evaluation)
+  - Technology stack details
+  - LangGraph workflow implementation
+  - Vector store integration
+
+- **[LOGGING.md](LOGGING.md)** - Comprehensive logging guide:
+  - Logger usage and configuration
+  - Log levels and formatting
+  - Best practices
+  - Troubleshooting with logs
+
+- **[QUICKSTART.md](QUICKSTART.md)** - Quick setup and usage guide
+
+## 🛠️ Technology Stack
+
+- **Frontend**: Streamlit web application
+- **AI/ML**: Azure OpenAI (GPT-4o), LangGraph, LangChain
+- **Vector Database**: ChromaDB for course recommendations
+- **Data Processing**: pandas, openpyxl, PyPDF2, python-docx
+- **State Management**: Pydantic models
+- **Logging**: Professional logging system with rotation
+
+## 📊 Weighted Scoring System
+
+### Job Matching Score
 ```
+Match Score = (0.7 × Primary Skills Match) + (0.3 × Secondary Skills Match)
+```
+- **70% weight** on PRIMARY (required) skills
+- **30% weight** on SECONDARY (preferred) skills
+- Reflects real hiring priorities
+
+### Answer Evaluation Score
+```
+Overall Score = (0.7 × Practical Score) + (0.3 × Theoretical Score)
+```
+- **70% weight** on practical, hands-on understanding
+- **30% weight** on theoretical knowledge
+- Emphasizes job-readiness
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed scoring formulas and examples.
 
 ## Installation
 
@@ -152,50 +214,45 @@ print(f"Best candidate: {best_fit.resume_name}")
 print(f"Match score: {best_fit.match_score}")
 ```
 
-## Project Structure
+## 📁 Project Structure
 
 ```
 .
-├── main.py                          # Main entry point with examples
+├── streamlit_app.py                 # Streamlit web interface (MAIN ENTRY)
+├── main.py                          # CLI entry point
+├── ARCHITECTURE.md                  # Complete system architecture
+├── LOGGING.md                       # Logging documentation
+├── QUICKSTART.md                    # Quick start guide
+├── data/
+│   └── Course Master List.xlsx     # Course catalog (2000+ courses)
 ├── src/
 │   ├── config/
-│   │   └── config.py               # Configuration and LLM initialization
+│   │   └── config.py               # Azure OpenAI configuration
 │   ├── state/
-│   │   ├── rag_state.py            # Original RAG state (legacy)
-│   │   └── job_match_state.py      # Job matching state definitions
+│   │   ├── job_match_state.py      # Agent 1 state
+│   │   ├── interview_prep_state.py # Agent 2 state
+│   │   ├── answer_eval_state.py    # Agent 3 state
+│   │   └── gap_analysis_state.py   # Agent 4 state
 │   ├── node/
-│   │   ├── nodes.py                # Original nodes (legacy)
-│   │   ├── reactnode.py            # Original ReAct nodes (legacy)
-│   │   └── job_match_nodes.py      # Job matching node implementations
-│   └── graph_builder/
-│       ├── graph_builder.py        # Original graph builder (legacy)
-│       └── job_match_graph.py      # Job matching graph builder
-├── requirements.txt                 # Python dependencies
-└── README.md                       # This file
+│   │   ├── job_match_nodes.py      # Agent 1 nodes
+│   │   ├── interview_prep_nodes.py # Agent 2 nodes
+│   │   ├── answer_eval_nodes.py    # Agent 3 nodes
+│   │   └── gap_analysis_nodes.py   # Agent 4 nodes
+│   ├── graph_builder/
+│   │   ├── job_match_graph.py      # Agent 1 workflow
+│   │   ├── interview_prep_graph.py # Agent 2 workflow
+│   │   ├── answer_eval_graph.py    # Agent 3 workflow
+│   │   └── gap_analysis_graph.py   # Agent 4 workflow
+│   ├── vectorstore/
+│   │   └── course_vectorstore.py   # ChromaDB integration
+│   └── utils/
+│       ├── logger.py               # Professional logging system
+│       └── document_parser.py      # PDF/DOCX parsing
+├── logs/                            # Auto-generated log files
+│   ├── application.log             # All application logs
+│   └── error.log                   # Error logs only
+└── requirements.txt                 # Python dependencies
 ```
-
-## State Management
-
-The agent uses Pydantic models for type-safe state management:
-
-### JobMatchState
-- `job_description_text`: Raw job description input
-- `resume_texts`: List of resume dictionaries
-- `job_description`: Parsed job description
-- `resumes`: Parsed resume objects
-- `candidate_matches`: Analysis results for all candidates
-- `best_candidate`: Top-ranked candidate
-- `analysis_complete`: Workflow completion flag
-
-### CandidateMatch
-- `resume_id`: Unique identifier
-- `resume_name`: Candidate name
-- `match_score`: 0-100 fit score
-- `matched_skills`: Skills matching requirements
-- `missing_skills`: Required skills candidate lacks
-- `gaps`: Detailed gap analysis
-- `strengths`: Candidate's relevant strengths
-- `summary`: Overall assessment
 
 ## Configuration
 
